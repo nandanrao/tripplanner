@@ -122,19 +122,6 @@ ul {
       margin: .5em 0;
       width: 100%;
       list-style: none;
-      &:hover {
-        & span.delete, & span.change {
-          display: flex;
-        }
-      }
-      &.list-open{
-        &:hover {
-          & span.delete, & span.change {
-            display: none;
-          }
-        }
-        background-color: $change;
-      }
       span {
         display: block;
         &.address {
@@ -180,8 +167,6 @@ ul {
   }
   &.alternates {
     li {
-      // border-top: 2px solid #333;
-      // border-bottom: 2px solid #333;
       border: none;
       font-size: .5em;
       font-weight: 700;
@@ -191,6 +176,14 @@ ul {
         cursor: pointer;
       }
     }
+  }
+}
+
+div.directions {
+  font-size: .5em;
+  text-align: left;
+  span {
+    display: inline !important; // ! needed to override specific
   }
 }
 

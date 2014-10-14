@@ -60,10 +60,8 @@ var gmaps = (function(){
       destination: b.LatLng,
       travelMode: google.maps.TravelMode.TRANSIT, 
     }
-    // var directionsDisplay = new google.maps.DirectionsRenderer();
+    var directionsDisplay = new google.maps.DirectionsRenderer();
     googleDirections.route(rando, function(result, status){
-      // directionsDisplay.setPanel(document.getElementById('directions'));
-      // directionsDisplay.setDirections(result);
       // console.log(result, status)
       if (status == 'OVER_QUERY_LIMIT') {
         setTimeout(function(){
@@ -71,7 +69,15 @@ var gmaps = (function(){
         }, 500) 
         return;
       }
-      callback(result.routes[0].legs[0].duration.value/60)
+      // Create div of directions
+      var directionsDiv = document.createElement('div');
+      directionsDiv.classList.add('directions');
+      directionsDiv.setAttribute('data-origin', a._id);
+      directionsDiv.setAttribute('data-destination', b._id);
+      directionsDisplay.setPanel(directionsDiv);
+      directionsDisplay.setDirections(result);
+      // callback!
+      callback(result.routes[0].legs[0].duration.value/60, directionsDiv)
     });
   };
   
@@ -110,12 +116,13 @@ var routeCalculator = (function(){
     hash = [];
     function getDuration(arr, callback){
       // console.count('getDuration has: ', arr[0].LatLng, arr[1].LatLng)
-      gmaps.distance(arr[0], arr[1], function(dur){
+      gmaps.distance(arr[0], arr[1], function(dur, div){
         console.count('google answered!')
         var obj = {};
         obj.start = arr[0];
         obj.end = arr[1];
         obj.duration = dur;
+        obj.directions = div;
         hash.push(obj)
         callback(null)
       });
@@ -161,9 +168,11 @@ var routeCalculator = (function(){
     // each array of places
     var newArr = []
     arr.forEach(function(el){
+      var routeObj = calculateRoute(el, hash)
       var obj = {
-        duration: calculateRoute(el, hash),
+        duration: routeObj.duration,
         places: el,
+        directions: routeObj.directions,
       }
       newArr.push(obj);
     })
@@ -176,23 +185,28 @@ var routeCalculator = (function(){
 
   // takes an array of places (helper for bestRoute)
   function calculateRoute(arr, hash){
+    var directions = [];
     var totalDuration = 0;
     for (var i=0, len=arr.length; i<len-1; i++){
       hash.forEach(function(el){
         if (arr[i].g_id === el.start.g_id){
           if (arr[i+1].g_id === el.end.g_id){
             totalDuration += el.duration
+            directions.push(el.directions)
           }
         }
       })
     }
-    return totalDuration
-  }
+    return {
+      duration: totalDuration,
+      directions: directions,
+    }
+  };
+
   // magic ties everything together in the right order!
   var magic = function(arr, callback){
     // Create an array of all possible routes
-    var routesArr = routes(arr);
-    // Create an array of each unique leg in the trip
+    var routesArr = routes(arr);    // Create an array of each unique leg in the trip
     var legs = createLegs(arr);
     // Measure the duration of each leg of the trip
     // return an array with all legs and their durations
@@ -219,13 +233,18 @@ var controller = (function(){
       routeCalculator.calculate(storage.places, function(route){
         // Change the 'pos' property on each place object, based on best route
         for (var i=0, len=route.places.length; i<len; i++){
-          route.places[i].pos = i+1;
+          route.places[i].pos = i;
+          route.places[i].next = route.places[i+1] || null;
+          route.places[i].directions = route.directions[i];
+          route.places[i].calculated = true;
         }
         // create a duration element and add it (should be template?)
         var dur = document.createElement('li');
         document.getElementById('places').appendChild(dur);
         dur.style.order = route.places.length + 1;
         dur.innerHTML = Math.round(route.duration) + ' min'
+        // tell everyone we've calculated the route!
+        PubSub.publish('route_calculated', route)
       })
     })
   }
@@ -249,10 +268,10 @@ var input = (function(){
       _chosenResult: null,
       set chosenResult(newPlace){
         // copy the values we care about to main place object
-        place.name = newPlace.name;
-        place.g_id = newPlace.id;
-        place.address = newPlace.vicinity;
-        place.LatLng = newPlace.geometry.location;     
+        this.name = newPlace.name;
+        this.g_id = newPlace.id;
+        this.address = newPlace.vicinity;
+        this.LatLng = newPlace.geometry.location;    
         // set our chosenResult object
         this._chosenResult = newPlace;
       },
@@ -291,9 +310,6 @@ PubSub.subscribe('newInput', function(msg, place){
 });
 
 
-
-
-
 var viewOfPlace = (function(){
   var newPlace = function(place){
     // Create the (li) DOM element for this place (var el)
@@ -307,39 +323,78 @@ var viewOfPlace = (function(){
       el : el,
       name: el.getElementsByClassName('name')[0],
       address: el.getElementsByClassName('address')[0],
-      alternate: false,
+      open: false,
     };
 
-    var deleteBtn = document.createElement('span')
-    deleteBtn.innerHTML = 'delete';
-    deleteBtn.classList.add('delete');
-    deleteBtn.onclick = function(){
+    li.address.innerHTML = place.address || null;
+    // Create button to delete element
+    li.deleteBtn = document.createElement('span')
+    li.deleteBtn.innerHTML = 'delete';
+    li.deleteBtn.classList.add('delete');
+    li.deleteBtn.onclick = function(){
       place.deleted = true;
     };
-
-    var changeBtn = document.createElement('span');
-    changeBtn.innerHTML = 'other';
-    changeBtn.classList.add('change');
-    changeBtn.onclick = showOtherResults;
-
-    li.el.appendChild(changeBtn);
-    li.el.appendChild(deleteBtn);
+    // Create button to show other results
+    li.changeBtn = document.createElement('span');
+    li.changeBtn.innerHTML = 'other';
+    li.changeBtn.classList.add('change');
+    li.changeBtn.onclick = function(){
+      showOtherResults();
+    }
+    // function to show above buttons
+    var showControlBtns = function(){
+      if(!li.open && !place.calculated){
+        li.deleteBtn.style.display = 'flex'; 
+        li.changeBtn.style.display = 'flex';
+      }
+    }
+    // function to hide above buttons
+    var hideControlBtns = function(){
+      li.deleteBtn.style.display = 'none';
+      li.changeBtn.style.display = 'none';  
+    }
+    // mouse events to show/hide control buttons on mouseover
+    li.el.addEventListener('mouseover', showControlBtns);
+    li.el.addEventListener('mouseout', hideControlBtns);
+    // appen the buttons!
+    li.el.appendChild(li.changeBtn);
+    li.el.appendChild(li.deleteBtn);
     // Append (li) element for this place
     document.getElementById('places').appendChild(li.el);
     // Create DOM element for alternate results for this place
     var ul = document.createElement('ul')
     ul.classList.add('alternates');
     // Add a click event for each place (to show alternates)
-    li.name.onclick = showOtherResults
-
+    li.name.onclick = function(){
+      if (!!place.calculated){
+        showDirections()
+      }
+      else {
+        showOtherResults();
+      }
+    }
+    function showDirections(){
+      if (!li.open){
+        if (!!place.directions){
+          li.el.appendChild(place.directions);
+          li.open = true;  
+          li.el.classList.toggle('list-open');
+        }
+      }
+      else if (li.open){
+        li.el.removeChild(place.directions);
+        li.open = false;
+        li.el.classList.toggle('list-open');
+      }
+    }
     function showOtherResults(){
       if (place.otherResults.length < 1){
         return
       }
-      if (!li.alternate){
-        li.el.classList.toggle('list-open');
+      if (!li.open){
+        hideControlBtns();
         ul.style.display = 'block';
-        li.alternate = true;
+        li.open = true;
         ul.innerHTML = Handlebars.templates.alternates(place);
         li.el.appendChild(ul);
         // add click event to each alternate place to make it THE place!
@@ -355,20 +410,19 @@ var viewOfPlace = (function(){
               }
             })
             this.parentNode.innerHTML = '';
-            li.el.classList.toggle('list-open');
-            li.alternate = false;
+            li.open = false;
           }
         }
       }
-      else if (li.alternate){
-        li.el.classList.toggle('list-open');
-        li.alternate = false;
+      else if (li.open){
+        li.open = false;
         ul.innerHTML = '';
       }
     }
 
     // Put a listener on each place object to bind view to object properties
     Object.observe(place, function(changes){
+      PubSub.publish('object_change', changes)
       changes.forEach(function(change){
         if (change.name === 'g_id'){
           li.name.innerHTML = place.name;
@@ -387,20 +441,20 @@ var viewOfPlace = (function(){
   }
 
   return {
-    newPlace : newPlace
+    newPlace : newPlace,
   }
 
 })();
-
-
-
 
 
 // View Changes on new input
 PubSub.subscribe('newInput', function(msg, place){
   viewOfPlace.newPlace(place);
 });
- 
+
+PubSub.subscribe('rebuildTrip', function(msg, place){
+  viewOfPlace.newPlace(place);
+});
 
 
 // Show CALCULATE button when at least 3 places are entered.  
@@ -418,8 +472,19 @@ PubSub.subscribe('stored_places', function(msg, places){
 
 // Stores all our place objects in a nice array!
 var storage = (function(){
+
+
   var places = [];
-  var tripInfo = {};
+
+  places.forEach(function(place){
+    PubSub.publish('rebuildTrip', place)
+  });
+
+  PubSub.subscribe('object_change', function(msg, changes){
+    // addToDB(changes[0].object)
+    // storeLocal();
+    // console.log('store!', window.localStorage.getItem('trip'))
+  })
 
   function set(place){
     places.push(place)
@@ -450,11 +515,74 @@ var storage = (function(){
 
   PubSub.subscribe('newInput', function(msg, obj){
     set(obj);
+    // addToDB(obj);
   });
+
+  var db;
+  var request = indexedDB.open('tripplanner', 4);
+  request.onupgradeneeded = function(e){
+    console.log("upgrade!")
+    db = e.target.result
+    if (db.objectStoreNames.contains('trip')){
+      db.deleteObjectStore('trip');
+    }
+    db.createObjectStore('trip', {keyPath: '_id'});
+  }
+  request.onsuccess = function(e){
+    console.log('succes?')
+    db = e.target.result;
+  }
+  request.onerrer = function(e){
+    console.log('weird db error:', e)
+  }
+
+  function addToDB(obj){
+    var transaction = db.transaction(['trip'], 'readwrite');
+    var store = transaction.objectStore('trip')
+    var request = store.put(obj);
+    request.onsuccess = function(e){
+      console.log('succes!!!', request.result)
+    }
+    request.onerror = function(e){
+      console.log('error', e)
+    }
+  }
+
+  function getFromDB(id){
+    var transaction = db.transaction(['trip']);
+    var store = transaction.objectStore('trip')
+    var request = store.get(id);
+    request.onsuccess = function(e){
+      console.log('get', e, request.result)
+    }
+    request.onerror = function(e){
+      console.log('error', e)
+    }
+  }
+
+  function updateDB(obj){
+    var transaction = db.transaction(['trip'], 'readwrite');
+    var store = transaction.objectStore('trip')
+    var request = store.get(obj._id);
+    request.onsuccess = function(e){
+      console.log('updated first', request.result)
+      var requestUpdate = store.put(obj)
+      requestUpdate.onerror = function(e){
+        console.log('error?')
+      }
+      requestUpdate.onsuccess = function(e){
+        console.log('totally updated', e)
+      }
+    }
+    request.onerror = function(e){
+      console.log('error', e)
+    } 
+  }
 
   return {
     places: places,
     destroy: destroy,
     allFound: allFound,
+    get: getFromDB,
   }
 })();
