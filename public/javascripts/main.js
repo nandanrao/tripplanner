@@ -33,20 +33,21 @@ var gmaps = (function(){
         radius: '20000',
         keyword: place.name,
       }
-      googleSearch.nearbySearch(request, function(results, status){
-        // add properties to place and return it!
-        place.g_id = results[0].id;
-        place.init_str = place.name;
-        place.name = results[0].name;
-        place.address = results[0].vicinity;
-        place.LatLng = results[0].geometry.location;
-        place.otherResults = [];
-
-        for (var i=1, len=results.length; i<len; i++){
-          place.otherResults.push(results[i]);
+      googleSearch.nearbySearch(request, function(results, status){ 
+        var error
+        if (status !== 'OK'){
+          error = status;
+          place.deleted = true;
         }
-
-        callback(place)
+        else {
+          // set top result as chose
+          place.chosenResult = results[0]
+          // push other results to otherResults array
+          for (var i=1, len=results.length; i<len; i++){
+            place.otherResults.push(results[i]);
+          }
+          callback(place)
+        }
       })
     }
   };
@@ -210,21 +211,11 @@ var routeCalculator = (function(){
 
 // Handles submitting of places for bestRoute calculations, and return display... 
 var controller = (function(){
-  // initialize array for all the google lookups
-  var foundArray = []
-  // Subscribe gmaps.lookup method, add promise to array
-  PubSub.subscribe('newInput', function(msg, obj){
-    var found = new Promise(function(resolve, reject){
-        gmaps.lookup(obj, resolve)
-    });
-    foundArray.push(found)
-  });
-
   function enterKey(e){
     e.target.style.display = 'none';
     document.getElementById('inputForm').style.display = 'none';
     // check to see if all locations have been found, then calculate best route.
-    Promise.all(foundArray).then(function(results){
+    storage.allFound.then(function(results){
       routeCalculator.calculate(storage.places, function(route){
         // Change the 'pos' property on each place object, based on best route
         for (var i=0, len=route.places.length; i<len; i++){
@@ -244,6 +235,7 @@ var controller = (function(){
 })();
 
 
+
 // Creates new place objects from form input.
 var input = (function(){
   // if store is empty, set counter to 0, else... 
@@ -251,8 +243,24 @@ var input = (function(){
   var createPlaceObj = function(str){
     var place = {
       _id: '_' + Math.random().toString(36).substr(2, 9),
+      init_str: str,
       name: str,
       pos : ++counter,
+      _chosenResult: null,
+      set chosenResult(newPlace){
+        // copy the values we care about to main place object
+        place.name = newPlace.name;
+        place.g_id = newPlace.id;
+        place.address = newPlace.vicinity;
+        place.LatLng = newPlace.geometry.location;     
+        // set our chosenResult object
+        this._chosenResult = newPlace;
+      },
+      get chosenResult(){
+        return this._chosenResult;
+      },
+      otherResults : [],
+      deleted: false,
     };
     PubSub.publish('newInput', place) 
   };
@@ -264,9 +272,7 @@ var input = (function(){
   }
 })();
 
-
-
-// Add onsubmit listener to the input!
+// Takes initial input from user
 (function(){
 var form = document.getElementById('inputForm')
 form.onsubmit = function(e){
@@ -277,85 +283,138 @@ form.onsubmit = function(e){
 }
 })()
 
+// Call gmaps lookup!
+PubSub.subscribe('newInput', function(msg, place){
+  place.found = new Promise(function(resolve, reject){
+      gmaps.lookup(place, resolve)
+  });
+});
+
+
+
+
+
+var viewOfPlace = (function(){
+  var newPlace = function(place){
+    // Create the (li) DOM element for this place (var el)
+    var li = Handlebars.templates.place(place);
+    var tempWrapper = document.createElement('ul');
+    tempWrapper.innerHTML = li;
+    el = tempWrapper.firstChild;
+
+    // object to hold DOM elements
+    li = {
+      el : el,
+      name: el.getElementsByClassName('name')[0],
+      address: el.getElementsByClassName('address')[0],
+      alternate: false,
+    };
+
+    var deleteBtn = document.createElement('span')
+    deleteBtn.innerHTML = 'delete';
+    deleteBtn.classList.add('delete');
+    deleteBtn.onclick = function(){
+      place.deleted = true;
+    };
+
+    var changeBtn = document.createElement('span');
+    changeBtn.innerHTML = 'other';
+    changeBtn.classList.add('change');
+    changeBtn.onclick = showOtherResults;
+
+    li.el.appendChild(changeBtn);
+    li.el.appendChild(deleteBtn);
+    // Append (li) element for this place
+    document.getElementById('places').appendChild(li.el);
+    // Create DOM element for alternate results for this place
+    var ul = document.createElement('ul')
+    ul.classList.add('alternates');
+    // Add a click event for each place (to show alternates)
+    li.name.onclick = showOtherResults
+
+    function showOtherResults(){
+      if (place.otherResults.length < 1){
+        return
+      }
+      if (!li.alternate){
+        li.el.classList.toggle('list-open');
+        ul.style.display = 'block';
+        li.alternate = true;
+        ul.innerHTML = Handlebars.templates.alternates(place);
+        li.el.appendChild(ul);
+        // add click event to each alternate place to make it THE place!
+        for (var i=0, len=ul.children.length; i<len; i++){   
+          ul.children[i].onclick = function(e){
+            var g_id = this.getAttribute('data-google-id');
+            place.otherResults.forEach(function(el, i){
+              if (el.id === g_id){
+                var tempEl = place.chosenResult;
+                place.chosenResult = el;
+                place.otherResults.splice(i, 1);
+                place.otherResults.unshift(tempEl);
+              }
+            })
+            this.parentNode.innerHTML = '';
+            li.el.classList.toggle('list-open');
+            li.alternate = false;
+          }
+        }
+      }
+      else if (li.alternate){
+        li.el.classList.toggle('list-open');
+        li.alternate = false;
+        ul.innerHTML = '';
+      }
+    }
+
+    // Put a listener on each place object to bind view to object properties
+    Object.observe(place, function(changes){
+      changes.forEach(function(change){
+        if (change.name === 'g_id'){
+          li.name.innerHTML = place.name;
+          li.address.innerHTML = place.address;
+        } 
+        if (change.name === 'pos'){
+          li.el.style.order = place.pos;
+        }
+        if (change.name === 'deleted'){
+          li.el.style.display = 'none';
+          storage.destroy(place._id);
+          Object.unobserve(place);
+        }
+      })
+    })
+  }
+
+  return {
+    newPlace : newPlace
+  }
+
+})();
+
+
+
 
 
 // View Changes on new input
 PubSub.subscribe('newInput', function(msg, place){
-  // Create the DOM element for this place!
-  var li = Handlebars.templates.place(place);
-  var ul = document.createElement('ul');
-  ul.innerHTML = li;
-  el = ul.firstChild;
+  viewOfPlace.newPlace(place);
+});
+ 
 
-  // object to use mucho
-  li = {
-    el : el,
-    name: el.getElementsByClassName('name')[0],
-    address: el.getElementsByClassName('address')[0],
-    alternate: false,
-  };
-  
-  var ul = document.createElement('ul')
-  ul.classList.add('alternates');
 
-  li.name.onclick = function(e){
-    if (!li.alternate){
-      ul.style.display = 'block';
-      li.alternate = true;
-      ul.innerHTML = Handlebars.templates.alternates(place);
-      li.el.appendChild(ul);
-
-      console.log(ul.children);
-      for (var i=0, len=ul.children.length; i<len; i++){
-        ul.children[i].onclick = function(e){
-          var g_id = this.getAttribute('data-google-id');
-          place.otherResults.forEach(function(el){
-            if (el.id === g_id){
-              console.log(el);
-              place.g_id = el.id;
-              place.name = el.name;
-              place.address = el.vicinity;
-              place.LatLng = el.geometry.location;
-            }
-          })
-          this.parentNode.innerHTML = '';
-          li.alternate = false;
-        }
-      }
-    }
-    else if (li.alternate){
-      li.alternate = false;
-      ul.innerHTML = '';
-    }
-  }
-
-  document.getElementById('places').appendChild(li.el);
-
-  // Put a listener on each place object to bind view to object properties
-  Object.observe(place, function(changes){
-    changes.forEach(function(change){
-      if (change.name === 'name'){
-        li.name.innerHTML = change.object.name;
-      } 
-      if (change.name === 'address'){
-        li.address.innerHTML = change.object.address;
-      }
-      if (change.name === 'pos'){
-        li.el.style.order = change.object.pos;
-      }
-    })
-  })
-
-  // Show CALCULATE button when at least 3 places are entered.  
-  if (places.children.length > 2){
-    var calculateBtn = document.getElementById('calculate')
-    console.log(calculateBtn);
+// Show CALCULATE button when at least 3 places are entered.  
+PubSub.subscribe('stored_places', function(msg, places){
+  var calculateBtn = document.getElementById('calculate')
+  if (storage.places.length > 2){
     calculateBtn.style.display = 'inline-block'; 
     calculateBtn.onclick = controller.enter;
   }
+  else {
+    calculateBtn.style.display = 'none';
+  }
+}) 
 
-});
- 
 
 // Stores all our place objects in a nice array!
 var storage = (function(){
@@ -364,10 +423,29 @@ var storage = (function(){
 
   function set(place){
     places.push(place)
+    PubSub.publish('stored_places', places)
   }
 
   function findById(id){
+    places.forEach(function(place){
+      if (place._id === id){
+        return place
+      }
+    })
+  }
 
+  var allFound = new Promise (function (resolve, reject){
+    var foundArray = [];
+    places.forEach(function(place){
+      foundArray.push(place.found)
+    })
+    Promise.all(foundArray).then(resolve())
+  })
+
+  function destroy(id){
+    var i = places.indexOf(findById(id))
+    places.splice(i);
+    PubSub.publish('stored_places', places)
   }
 
   PubSub.subscribe('newInput', function(msg, obj){
@@ -376,5 +454,7 @@ var storage = (function(){
 
   return {
     places: places,
+    destroy: destroy,
+    allFound: allFound,
   }
 })();

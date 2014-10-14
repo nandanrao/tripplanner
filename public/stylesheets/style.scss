@@ -92,7 +92,7 @@ body, input, textarea, button {
 }
 
 body {
-  padding: 50px;
+  padding: 0px;
   color: #000;
   font: 2.33em "Lato";
   font-weight: 100;
@@ -106,27 +106,74 @@ body {
   }
 }
 
+$change: rgba(255, 255, 200, .75);
+$delete: rgba(255, 55, 55, .75);
+
 ul {
   padding: 0;
   &.places {
     display: flex;
     flex-direction: column;
     li {
+      position: relative;
       border-top: 1px dashed #aaa;
       border-bottom: 1px dashed #aaa;
       padding: 5px 0; 
       margin: .5em 0;
       width: 100%;
       list-style: none;
-      span.name {
-        &:hover {
-          cursor: pointer;
+      &:hover {
+        & span.delete, & span.change {
+          display: flex;
         }
+      }
+      &.list-open{
+        &:hover {
+          & span.delete, & span.change {
+            display: none;
+          }
+        }
+        background-color: $change;
       }
       span {
         display: block;
         &.address {
           font-size: .5em;  
+        }
+        &.name { 
+          &:hover {
+            cursor: pointer;
+          }
+        }
+        &.delete, &.change {
+          text-transform: uppercase;
+          font-weight: 700;
+          position: absolute;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          top: 0;
+          bottom: 0;
+          display: none;
+          &:hover {
+            cursor: pointer;
+          }
+        }
+        &.delete {
+          left: 50%;
+          right: 0;
+          background-color: $delete;
+          &:hover {
+            background-color: darken($delete, 10)
+          }
+        }
+        &.change {
+          left: 0;
+          right: 50%;
+          background-color: $change;
+          &:hover {
+            background-color: darken($change, 10);
+          }
         }
       }
     }
@@ -151,6 +198,9 @@ div.main {
   width: 50%;
   margin: 5em auto;
   text-align: center;
+  @media(max-width: 767px){
+    width: 98%;
+  }
 }
 
 
