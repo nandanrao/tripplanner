@@ -18,7 +18,7 @@ var gmaps = (function(){
     });
   });
 
-  var lookup = function(place, callback){
+  var lookup = function(str, callback){
     // console.log('gmaps lookup');
     // Check if we have users location, if we don't, get it!
     if (!current_location){
@@ -31,7 +31,7 @@ var gmaps = (function(){
       var request = {
         location: current_location,
         radius: '20000',
-        keyword: place.name,
+        keyword: str,
       }
       googleSearch.nearbySearch(request, function(results, status){ 
         var error
@@ -58,7 +58,8 @@ var gmaps = (function(){
     var rando = {
       origin: a.LatLng,
       destination: b.LatLng,
-      travelMode: google.maps.TravelMode.TRANSIT, 
+      travelMode: google.maps.TravelMode.TRANSIT,
+      provideRouteAlternatives: true, 
     }
     var directionsDisplay = new google.maps.DirectionsRenderer();
     googleDirections.route(rando, function(result, status){
@@ -70,6 +71,7 @@ var gmaps = (function(){
         return;
       }
       // Create div of directions
+      console.log('google directions result: ', result)
       var directionsDiv = document.createElement('div');
       directionsDiv.classList.add('directions');
       directionsDiv.setAttribute('data-origin', a._id);
